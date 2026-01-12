@@ -10,7 +10,7 @@ from treys import Card, Evaluator, Deck
 from llm_agent import LLMPokerAgent
 
 
-API_KEY = "sk-bsuespgnaotswlttledrfzcxgirnpwsjafthsfgqqmgwemro" 
+API_KEY = "sk-" 
 BASE_URL = "https://api.siliconflow.cn/v1"
 MODEL_NAME = "deepseek-ai/DeepSeek-V3"
 
@@ -397,4 +397,5 @@ async def interact(req: InteractReq):
     return game.get_state()
 
 if __name__ == "__main__":
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
