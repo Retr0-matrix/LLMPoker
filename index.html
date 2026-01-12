@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Royal Poker AI - Final</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&family=Rubik:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Rubik', sans-serif; overflow: hidden; background: #000; }
+        
+        .casino-bg {
+            background: radial-gradient(circle at 50% 30%, #1a1a1a 0%, #000000 100%);
+        }
+        .poker-table {
+            background: radial-gradient(ellipse at center, #388e3c 0%, #1b5e20 90%, #0d3312 100%);
+            box-shadow: 
+                inset 0 0 100px rgba(0,0,0,0.8), 
+                0 0 0 15px #3e2723, 
+                0 0 0 18px #5d4037, 
+                0 30px 60px rgba(0,0,0,0.8);
+            position: relative;
+            border-radius: 200px;
+        }
+        
+        .perspective-container {
+            transform: perspective(1200px) rotateX(20deg) scale(0.95);
+            transform-style: preserve-3d;
+        }
+
+        .player-seat {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.5s ease-in-out;
+            z-index: 20;
+        }
+
+        .active-ring {
+            box-shadow: 0 0 0 4px #f59e0b, 0 0 30px #f59e0b;
+            transform: scale(1.1);
+            z-index: 30;
+        }
+
+        .flying-emoji {
+            position: fixed;
+            font-size: 4rem;
+            z-index: 9999;
+            pointer-events: none;
+            will-change: left, top, transform, opacity;
+            animation: flyToTarget 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        @keyframes flyToTarget {
+            0% { 
+                left: var(--start-x); 
+                top: var(--start-y); 
+                opacity: 0; 
+                transform: translate(-50%, -50%) scale(0.5); 
+            }
+            10% { opacity: 1; transform: translate(-50%, -50%) scale(1.5); }
+            80% { 
+                left: var(--end-x); 
+                top: var(--end-y); 
+                opacity: 1; 
+                transform: translate(-50%, -50%) scale(1); 
+            }
+            100% { 
+                left: var(--end-x); 
+                top: var(--end-y); 
+                opacity: 0; 
+                transform: translate(-50%, -50%) scale(2); 
+            }
+        }
+
+        .card-font { font-family: 'Roboto Mono', monospace; }
+        .slide-up { animation: slideUp 0.3s ease-out backwards; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .pulse-ring { box-shadow: 0 0 0 4px #f59e0b, 0 0 30px #f59e0b; transform: scale(1.1); z-index: 30; }
+        
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="h-screen w-screen casino-bg text-gray-100 selection:bg-yellow-500/30">
+    <div id="app" class="h-full w-full relative" @click="handleGlobalClick">
+
+
+        <div v-for="anim in activeAnims" :key="anim.id" 
+             class="flying-emoji"
+             :style="{ '--start-x': anim.startX + 'px', '--start-y': anim.startY + 'px', '--end-x': anim.endX + 'px', '--end-y': anim.endY + 'px' }">
+            {{ anim.item }}
+        </div>
+
+ 
+        <div class="fixed top-0 left-0 h-full w-72 bg-black/80 backdrop-blur-lg border-r border-white/5 p-4 flex flex-col z-50 transform transition-transform duration-300" :class="showSidebar ? 'translate-x-0' : '-translate-x-64'">
+            <button @click.stop="showSidebar = !showSidebar" class="absolute -right-8 top-1/2 w-8 h-16 bg-black/80 rounded-r flex items-center justify-center text-gray-400 hover:text-white">
+                {{ showSidebar ? '◀' : '▶' }}
+            </button>
+            
+            <div class="font-bold text-yellow-500 tracking-widest text-xs mb-4 uppercase">Live Feed</div>
+            <div class="flex-1 overflow-y-auto space-y-2 scrollbar-hide pr-2">
+                <div v-for="(log, i) in reversedLog" :key="i" class="text-[11px] border-l-2 pl-2 py-1" :class="getLogColor(log)">
+                    {{ log }}
+                </div>
+            </div>
+            
+            <div class="mt-4 border-t border-white/10 pt-4">
+                <div class="font-bold text-blue-400 tracking-widest text-xs mb-2 uppercase">AI Brain</div>
+                <div v-if="state.last_ai_thought" class="bg-blue-900/20 p-3 rounded text-xs text-blue-100 border border-blue-500/30 animate-pulse">
+                    <span class="font-bold block mb-1 text-blue-300">{{ state.last_ai_thought.name }}:</span>
+                    "{{ state.last_ai_thought.reasoning }}"
+                </div>
+                <div v-else class="text-xs text-gray-600 italic">Waiting for AI...</div>
+            </div>
+        </div>
+
+
+        <div class="fixed top-4 right-4 z-50 flex gap-2">
+            <div class="bg-black/60 backdrop-blur px-3 py-1 rounded-full border border-white/10 text-xs font-mono text-gray-400 flex items-center gap-2">
+                <span>BOTS:</span>
+                <button @click="changeBots(-1)" :disabled="state.hand_active" class="hover:text-white disabled:opacity-30 text-lg leading-none">-</button>
+                <span class="text-white font-bold">{{ state.players.length - 1 }}</span>
+                <button @click="changeBots(1)" :disabled="state.hand_active" class="hover:text-white disabled:opacity-30 text-lg leading-none">+</button>
+            </div>
+        </div>
+
+        <div class="absolute inset-0 flex items-center justify-center overflow-hidden">
+            <div class="w-[1100px] h-[650px] relative scene-container">
+                
+         
+                <div class="absolute inset-0 poker-table">
+         
+                    <div class="absolute top-[35%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
+                        <div class="text-[#f1f1f1] opacity-10 text-6xl font-black tracking-tighter select-none">TEXAS</div>
+                        <div class="bg-black/40 px-6 py-1 rounded-full text-yellow-400 font-mono text-xl border border-yellow-500/30 mt-2 shadow-inner">
+                            POT: <span class="font-bold">🪙{{ state.pot }}</span>
+                        </div>
+                    </div>
+
+               
+                    <div class="absolute top-[52%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex gap-3">
+                        <div v-for="(c, i) in state.community_cards" :key="i" v-html="renderCard(c)" 
+                             class="w-16 h-24 bg-gray-200 rounded shadow-2xl flex items-center justify-center text-3xl slide-up"
+                             :style="`animation-delay: ${i * 0.1}s`">
+                        </div>
+          
+                        <div v-if="state.community_cards.length < 3" class="w-16 h-24 border-2 border-white/10 rounded border-dashed opacity-30"></div>
+                        <div v-if="state.community_cards.length < 4" class="w-16 h-24 border-2 border-white/10 rounded border-dashed opacity-30"></div>
+                        <div v-if="state.community_cards.length < 5" class="w-16 h-24 border-2 border-white/10 rounded border-dashed opacity-30"></div>
+                    </div>
+                </div>
+
+         
+                <div class="absolute -top-24 left-2/3 -translate-x-1/2 flex flex-col items-center pointer-events-none" style="transform: translateZ(50px);">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Mimi&backgroundColor=0077b6&radius=10" class="w-24 h-24 rounded-full border-4 border-gray-800 shadow-xl bg-gray-200">
+                    <div class="bg-black text-xs text-gray-400 px-2 rounded mt-[-10px] z-10 border border-gray-700">Dealer</div>
+                </div>
+
+              
+                <div v-for="(p, i) in state.players" :key="i">
+                    <div v-if="i !== 0" 
+                         class="player-seat"
+                         :style="getSeatStyle(i, state.players.length)"
+                         :id="'player-seat-' + i">
+                        
+                        <div class="relative group cursor-pointer" @click.stop="toggleMenu(i)">
+                          
+                            <div class="w-20 h-20 rounded-full border-4 shadow-[0_10px_20px_rgba(0,0,0,0.5)] bg-gray-900 overflow-hidden transition-all duration-300"
+                                 :class="[
+                                    isActive(i) ? 'border-yellow-500 shadow-[0_0_30px_#f59e0b] scale-110' : 'border-gray-700 opacity-90',
+                                    state.winners.includes(p.name) ? 'ring-4 ring-green-500 animate-bounce' : ''
+                                 ]">
+                                <img :src="p.avatar" class="w-full h-full object-cover">
+                                
+                                <div v-if="p.folded" class="absolute inset-0 bg-black/80 flex items-center justify-center text-red-500 font-bold text-xs uppercase tracking-widest">Folded</div>
+                                <div v-if="p.allin" class="absolute inset-0 bg-red-600/80 flex items-center justify-center text-white font-bold text-xs uppercase tracking-widest animate-pulse">All-In</div>
+                            </div>
+
+                       
+                            <div v-if="activeMenu === i" class="absolute -top-14 left-1/2 -translate-x-1/2 bg-gray-900 rounded-full border border-gray-700 p-1 flex gap-1 shadow-xl z-50 animate-bounce">
+                                <button v-for="emoji in ['🍅','🍺','💣','🤝']" @click.stop="sendInteract(i, emoji)" class="w-8 h-8 hover:bg-white/10 rounded-full text-lg">{{ emoji }}</button>
+                            </div>
+
+                            <div class="absolute -bottom-8 left-1/2 -translate-x-1/2 w-32 text-center">
+                                <div class="bg-black/80 text-gray-200 text-[10px] font-bold px-2 py-0.5 rounded-t truncate border border-b-0 border-white/10">{{ p.name }}</div>
+                                <div class="bg-gray-800 text-yellow-400 text-xs font-mono font-bold px-2 py-0.5 rounded-b border border-t-0 border-white/10">🪙{{ p.stack }}</div>
+                            </div>
+
+                            <div v-if="p.role" class="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border border-black shadow-sm"
+                                 :class="p.role === 'D' ? 'bg-white text-black' : 'bg-yellow-600 text-white'">
+                                {{ p.role }}
+                            </div>
+                 
+                        </div>
+
+           
+                        <div class="flex gap-1 mt-10 justify-center">
+                            <template v-if="!p.folded">
+                                <div v-if="p.hand.length && (state.winners.length > 0 || !state.hand_active)" class="flex gap-1">
+                                    <div v-for="c in p.hand" v-html="renderCard(c)" class="w-8 h-12 bg-white rounded shadow-md flex items-center justify-center text-sm border border-gray-400"></div>
+                                </div>
+                                <div v-else class="flex gap-1">
+                                    <div class="w-8 h-12 bg-blue-900 rounded border border-white/20 shadow-inner bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')]"></div>
+                                    <div class="w-8 h-12 bg-blue-900 rounded border border-white/20 shadow-inner bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')]"></div>
+                                </div>
+                            </template>
+                        </div>
+                        
+                        <div v-if="p.bet > 0" class="mt-1 bg-black/60 text-white text-xs px-2 rounded-full border border-yellow-500/50">
+                            🪙{{ p.bet }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="state.players[0]" class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-3xl z-40 flex flex-col items-center">
+            
+            <div id="player-seat-0" class="absolute bottom-20 left-1/2 w-1 h-1"></div>
+
+            <div class="relative w-full bg-gradient-to-t from-black via-black/90 to-transparent pt-12 pb-6 px-8 flex flex-col items-center">
+                
+                <div v-if="isMyTurn" class="absolute top-0 animate-bounce text-yellow-400 font-bold tracking-widest text-sm drop-shadow-glow">YOUR TURN</div>
+
+                <div class="flex items-end gap-8 w-full justify-center">
+                    <div class="text-right hidden md:block">
+                        <div class="text-2xl font-bold text-white">{{ state.players[0].name }}</div>
+                        <div class="text-sm text-gray-400">Profit: <span :class="state.players[0].profit >=0 ? 'text-green-400':'text-red-400'">{{ state.players[0].profit }}</span></div>
+                        <div v-if="state.players[0].role" class="inline-block bg-yellow-600 text-white text-xs px-2 rounded mt-1">{{ state.players[0].role }}</div>
+                    </div>
+
+                    <div class="relative group">
+                        <div class="flex gap-2 transition-transform duration-300" :class="state.players[0].folded ? 'opacity-50 grayscale scale-90' : 'hover:-translate-y-4'">
+                            <div v-for="c in state.players[0].hand" v-html="renderCard(c)" class="w-24 h-36 bg-white rounded-xl shadow-[0_0_20px_rgba(0,0,0,0.5)] flex items-center justify-center text-5xl border border-gray-300 card-font"></div>
+                        </div>
+                        <div v-if="state.players[0].stack === 0 && !state.hand_active" class="absolute inset-0 flex items-center justify-center">
+                            <button @click="rebuy" class="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-6 rounded-full shadow-lg animate-pulse">REBUY $1000</button>
+                        </div>
+                    </div>
+
+                    <div class="text-left hidden md:block">
+                        <div class="text-xs text-gray-400 uppercase tracking-wider">Stack</div>
+                        <div class="text-3xl font-mono font-bold text-yellow-400 text-shadow">🪙{{ state.players[0].stack }}</div>
+                        <div v-if="state.players[0].bet > 0" class="text-sm text-yellow-200 mt-1">Bet: {{ state.players[0].bet }}</div>
+                    </div>
+                </div>
+
+                <div v-if="state.hand_active" class="mt-6 flex gap-4 items-center transition-all duration-300" :class="isMyTurn ? 'opacity-100 translate-y-0' : 'opacity-50 translate-y-4 pointer-events-none'">
+                    <button @click="act('FOLD')" class="bg-red-900/80 hover:bg-red-800 text-red-100 px-8 py-3 rounded-xl font-bold border border-red-700 shadow-lg active:scale-95 transition">FOLD</button>
+                    <button @click="act(toCall === 0 ? 'CHECK' : 'CALL')" class="bg-blue-900/80 hover:bg-blue-800 text-blue-100 px-10 py-3 rounded-xl font-bold border border-blue-700 shadow-lg active:scale-95 transition text-lg min-w-[160px]">{{ toCall === 0 ? 'CHECK' : 'CALL ' + toCall }}</button>
+                    <div class="flex items-center gap-2 bg-gray-900/80 p-1.5 rounded-xl border border-gray-700">
+                        <input type="range" :min="state.min_raise" :max="myStack" v-model.number="raiseAmount" class="w-32 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500">
+                        <button @click="act('RAISE', raiseAmount)" class="bg-yellow-700 hover:bg-yellow-600 text-yellow-100 px-4 py-2 rounded-lg font-bold text-sm border border-yellow-600 active:scale-95 transition whitespace-nowrap">{{ raiseAmount >= myStack ? 'ALL-IN' : 'RAISE ' + raiseAmount }}</button>
+                    </div>
+                </div>
+
+                <div v-if="!state.hand_active" class="mt-6 animate-bounce">
+                    <button @click="nextHand" class="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 text-white px-12 py-3 rounded-full font-bold text-xl shadow-[0_0_30px_rgba(16,185,129,0.4)] border border-white/20">{{ state.winners.length ? 'NEXT HAND' : 'NEXT HAND' }} ➡️</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        const sounds = {
+            check: new Audio('https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg'),
+            chip: new Audio('https://actions.google.com/sounds/v1/cartoon/pop.ogg'),
+            fold: new Audio('https://actions.google.com/sounds/v1/cartoon/cartoon_boing.ogg'),
+            win: new Audio('https://actions.google.com/sounds/v1/cartoon/tympani_bing.ogg')
+        };
+        Object.values(sounds).forEach(s => s.volume = 0.2);
+
+        createApp({
+            data() {
+                return {
+                    state: { players: [], community_cards: [], log: [], winners: [], pot: 0, hand_active: false, min_raise: 20, last_ai_thought: null },
+                    raiseAmount: 0,
+                    showSidebar: true,
+                    activeMenu: -1,
+                    activeAnims: [],
+                    lastIdx: -1,
+                    botTriggered: false,
+                    polling: null,
+                    userInteracted: false 
+                }
+            },
+            computed: {
+                reversedLog() { return (this.state.log || []).slice().reverse(); },
+                isMyTurn() { return this.state.current_idx === 0 && this.state.hand_active; },
+                toCall() { return this.state.players[0] ? (this.state.high_bet - this.state.players[0].bet) : 0; },
+                myStack() { 
+                    if (!this.state.players[0]) return 0;
+                    return this.state.players[0].stack + this.state.players[0].bet; 
+                },
+                activeThinker() { return this.state.players.find((p, i) => i === this.state.current_idx && p.is_bot); }
+            },
+            watch: {
+                'state.min_raise'(v) { if (this.raiseAmount < v) this.raiseAmount = v; },
+                'state.current_idx'(newVal) {
+                    if (newVal !== this.lastIdx) {
+                        this.botTriggered = false;
+                        this.lastIdx = newVal;
+                    }
+                }
+            },
+            methods: {
+                isActive(i) {
+                    return this.state.current_idx === i && this.state.hand_active;
+                },
+
+                playSound(snd) {
+                    if (this.userInteracted) {
+                        snd.currentTime = 0;
+                        snd.play().catch(e => console.log('Sound blocked:', e));
+                    }
+                },
+
+                handleGlobalClick() {
+                    this.userInteracted = true;
+                    this.activeMenu = -1;
+                },
+
+                async fetchState() {
+                    try {
+                        const res = await fetch('/state');
+                        const data = await res.json();
+                        
+                        if (data.interaction_event) {
+                            this.triggerAnim(data.interaction_event);
+                        }
+
+                        if (data.log.length > this.state.log.length) {
+                            const last = data.log[data.log.length - 1];
+                            if (last.includes("Check")) this.playSound(sounds.check);
+                            else if (last.includes("Raise") || last.includes("Call")) this.playSound(sounds.chip);
+                            else if (last.includes("Fold")) this.playSound(sounds.fold);
+                            else if (last.includes("wins")) this.playSound(sounds.win);
+                        }
+                        this.state = data;
+
+                        if (this.state.hand_active) {
+                            const curr = this.state.players[this.state.current_idx];
+                            if (curr && curr.is_bot && !this.botTriggered) {
+                                this.botTriggered = true; 
+                                fetch('/bot', {method: 'POST'}).catch(e => { console.error(e); this.botTriggered = false; });
+                            }
+                        }
+                    } catch (e) { console.error(e); }
+                },
+                
+                getSeatStyle(i, totalPlayers) {
+                    const botIndex = i - 1; 
+                    const botCount = totalPlayers - 1;
+                    
+                    let angleDeg;
+                    if (botCount === 1) {
+                        angleDeg = 90; 
+                    } else {
+                        const startAngle = 170;
+                        const endAngle = 10;
+                        const step = (startAngle - endAngle) / (botCount - 1);
+                        angleDeg = startAngle - (botIndex * step);
+                    }
+
+                    const rad = angleDeg * (Math.PI / 180);
+                    const rx = 48; const ry = 40; 
+                    const x = 50 - (rx * Math.cos(rad));
+                    const y = 45 - (ry * Math.sin(rad)); 
+                    return `left: ${x}%; top: ${y}%;`;
+                },
+
+                triggerAnim(evt) {
+                    const fromEl = document.getElementById('player-seat-' + evt.from);
+                    const toEl = document.getElementById('player-seat-' + evt.to);
+                    
+                    if (!fromEl || !toEl) return;
+
+                    const r1 = fromEl.getBoundingClientRect();
+                    const r2 = toEl.getBoundingClientRect();
+
+                    const anim = {
+                        id: Date.now() + Math.random(),
+                        item: evt.item,
+                        startX: r1.left + r1.width/2,
+                        startY: r1.top + r1.height/2,
+                        endX: r2.left + r2.width/2,
+                        endY: r2.top + r2.height/2
+                    };
+
+                    this.activeAnims.push(anim);
+                    setTimeout(() => {
+                        this.activeAnims = this.activeAnims.filter(a => a.id !== anim.id);
+                    }, 1200); 
+                },
+
+                toggleMenu(i) { this.activeMenu = this.activeMenu === i ? -1 : i; },
+                closeMenus() { this.activeMenu = -1; },
+                async sendInteract(targetIdx, item) {
+                    this.activeMenu = -1;
+                    await fetch('/interact', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({target_idx: targetIdx, item: item})
+                    });
+                    this.fetchState();
+                },
+                async act(action, amount=0) {
+                    this.playSound(sounds.chip);
+                    await fetch('/action', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action, amount})});
+                    this.fetchState();
+                },
+                async nextHand() { await fetch('/next', {method: 'POST'}); this.fetchState(); },
+                async rebuy() { await fetch('/rebuy', {method: 'POST'}); this.fetchState(); },
+                async changeBots(change) { await fetch('/change_bots', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({change})}); this.fetchState(); },
+                
+                renderCard(str) {
+                    if (!str) return "";
+                    const rank = str[0].replace('T', '10');
+                    const suit = str[1];
+                    const suitIcon = {'s':'♠','h':'♥','d':'♦','c':'♣'}[suit];
+                    const color = (suit === 'h' || suit === 'd') ? 'text-red-500' : 'text-black';
+                    return `<div class="flex flex-col leading-none items-center justify-center h-full"><span class="${color} text-lg">${rank}</span><span class="${color} text-2xl">${suitIcon}</span></div>`;
+                },
+                getLogColor(log) {
+                    if (log.includes("Fold")) return "border-red-500/50 text-gray-500";
+                    if (log.includes("Raise")) return "border-yellow-500/50 text-yellow-100";
+                    if (log.includes("wins")) return "border-green-500 bg-green-900/20 text-green-200 font-bold";
+                    if (log.includes("sent")) return "border-purple-500/50 text-purple-300";
+                    return "border-gray-700 text-gray-400";
+                }
+            },
+            mounted() {
+                this.fetchState();
+                this.polling = setInterval(this.fetchState, 1000);
+            },
+            unmounted() { clearInterval(this.polling); }
+        }).mount('#app');
+    </script>
+</body>
+</html>
